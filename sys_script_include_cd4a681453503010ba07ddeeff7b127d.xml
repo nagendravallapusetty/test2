@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sys_script_include">
+  <sys_script_include action="INSERT_OR_UPDATE">
+    <access>public</access>
+    <active>true</active>
+    <api_name>sn_spend_psd.ProcurementCaseAPI</api_name>
+    <caller_access/>
+    <client_callable>false</client_callable>
+    <description/>
+    <name>ProcurementCaseAPI</name>
+    <script><![CDATA[var ProcurementCaseAPI = Class.create();
+
+ProcurementCaseAPI.getCaseData = function(caseGr) {
+    var sysId = caseGr.getValue('sys_id');
+    var shortDesc = caseGr.getValue('short_description');
+    var state = caseGr.getDisplayValue('state');
+    var dueDate = ProcurementRequest.getDateInUserFormat(caseGr, 'due_date');
+    var number = caseGr.getDisplayValue('number');
+    var submittedOn = caseGr.getValue('sys_created_on');
+    var primaryContact = caseGr.getDisplayValue('primary_contact');
+    var overdueStatus = ProcurementRequest.getOverdueStatus(caseGr);
+	var createdBy = caseGr.getValue('opened_by');
+
+    var casePayload = {
+        'sys_id': sysId,
+        'short_description': shortDesc,
+        'state': state,
+        'due_date': dueDate,
+        'number': number,
+        'submitted_on': submittedOn,
+        'primary_contact': primaryContact,
+        'overdue_status': overdueStatus,
+		'created_by':createdBy
+    };
+	casePayload.labelValuePairs = ProcurementCaseAPI.getCaseLabelValuePairs(casePayload);
+	return casePayload;
+};
+
+ProcurementCaseAPI.getCaseLabelValuePairs = function(casePayload){
+		var labelValuePairs = [];
+		
+		
+		var labelValueObjDueDate = {
+			label: null,
+			value: null
+		};
+		labelValueObjDueDate.label = gs.getMessage('Due date');
+        labelValueObjDueDate.value = {};
+        labelValueObjDueDate.value.type = 'string';
+        labelValueObjDueDate.value.value = casePayload.due_date;
+		labelValuePairs.push(labelValueObjDueDate);
+		
+		var labelValueObjPrimaryContact = {
+			label: null,
+			value: null
+		};
+		labelValueObjPrimaryContact.label = gs.getMessage('Primary contact');
+        labelValueObjPrimaryContact.value = {};
+        labelValueObjPrimaryContact.value.type = 'string';
+        labelValueObjPrimaryContact.value.value = casePayload.primary_contact;
+		labelValuePairs.push(labelValueObjPrimaryContact);
+		
+		var labelValueObjNum = {
+			label: null,
+			value: null
+		};
+        labelValueObjNum.label = gs.getMessage('Number');
+        labelValueObjNum.value = {};
+        labelValueObjNum.value.type = 'string';
+        labelValueObjNum.value.value = casePayload.number;
+		labelValuePairs.push(labelValueObjNum);
+        
+		return labelValuePairs;
+    
+};
+
+ProcurementCaseAPI.getPurchaseRequestLineCaseLinesGr = function(caseId){
+    var procCaseLinesGr = new GlideRecord('sn_spend_psd_procurement_request_line');
+    procCaseLinesGr.addQuery('service_request='+ caseId+'^purchase_lineISNOTEMPTY');
+    procCaseLinesGr.query();
+    return procCaseLinesGr;
+};
+
+ProcurementCaseAPI.getPurchaseOrderLineCaseLinesGr = function(caseId){
+    var procCaseLinesGr = new GlideRecord('sn_spend_psd_procurement_request_line');
+    procCaseLinesGr.addQuery('service_request='+ caseId+'^purchase_order_lineISNOTEMPTY');
+    procCaseLinesGr.query();
+    return procCaseLinesGr;
+};
+
+ProcurementCaseAPI.prototype = {
+    initialize: function(purchaseLineId, purchaseId) {
+        this.purchaseLineId = purchaseLineId;
+        this.purchaseId = purchaseId;
+    },
+
+    getCasesForHeader: function() {
+        var query = 'purchase_request.sys_id=' + this.purchaseId + '^ORpurchase_order.sys_id=' + this.purchaseId;
+		query += this.getCasesForSourcingQuery(this.purchaseId);
+		var casesGr = new GlideRecordSecure('sn_spend_sdc_service_request');
+		casesGr.addEncodedQuery(query);
+		casesGr.query();
+        var data = ProcurementCaseUtil.generateCaseList(casesGr);
+        return data;
+    },
+
+	getCasesForSourcingQuery: function(sourcingId) {
+		var query = '';
+		var sourcingReq = new sn_shop.SourcingUtil(sourcingId);
+		if (sourcingReq.sourcingActivity.isValidRecord()) {
+			query = '^NQrelated_sr.sys_id=' + sourcingId;
+			
+			query += '^ORnegotiation_event=' + sourcingReq.getNegotiationEvent();
+			
+			var negotiationIds = sourcingReq.getNegotiations();
+			if (negotiationIds.length > 0)
+				query += '^ORnegotiationIN' + negotiationIds.join(',');
+		}
+		return query;
+	},
+	
+    getCasesCountForHeader: function() {
+        var data = this.getCasesForHeader();
+        return data.length;
+    },
+
+    getCasesForLine: function() {
+        var caseIds = [];
+        var shopLine = new sn_shop.ShopLine().getById(this.purchaseLineId);
+        var procCaseLinesGr = new GlideRecord('sn_spend_psd_procurement_request_line');
+        procCaseLinesGr.addQuery('purchase_line.sys_id=' + this.purchaseLineId + '^ORpurchase_order_line.sys_id=' + this.purchaseLineId);
+        procCaseLinesGr.query();
+        while (procCaseLinesGr.next()) {
+            caseIds.push(procCaseLinesGr.getValue('service_request'));
+        }
+
+        var query = 'sys_idIN' + caseIds.join(',');
+        var procurementCasesGr = new ProcurementRequest().getSecure(query);
+        var data = ProcurementCaseUtil.generateCaseList(procurementCasesGr);
+        return data;
+    },
+
+    getCasesCountForLine: function() {
+        var data = this.getCasesForLine();
+        return data.length;
+    },
+
+    type: 'ProcurementCaseAPI'
+};]]></script>
+    <sys_class_name>sys_script_include</sys_class_name>
+    <sys_created_by>admin</sys_created_by>
+    <sys_created_on>2021-05-19 07:31:10</sys_created_on>
+    <sys_id>cd4a681453503010ba07ddeeff7b127d</sys_id>
+    <sys_mod_count>29</sys_mod_count>
+    <sys_name>ProcurementCaseAPI</sys_name>
+    <sys_package display_value="Procurement Case Management" source="sn_spend_psd">825ca2835303101077b6ddeeff7b12d8</sys_package>
+    <sys_policy>read</sys_policy>
+    <sys_scope display_value="Procurement Case Management">825ca2835303101077b6ddeeff7b12d8</sys_scope>
+    <sys_update_name>sys_script_include_cd4a681453503010ba07ddeeff7b127d</sys_update_name>
+    <sys_updated_by>admin</sys_updated_by>
+    <sys_updated_on>2022-08-24 09:58:49</sys_updated_on>
+  </sys_script_include>
+</record_update>
